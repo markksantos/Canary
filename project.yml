@@ -1,0 +1,36 @@
+name: Canary
+options:
+  bundleIdPrefix: com.canary
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  CanaryPackage:
+    path: CanaryPackage
+
+targets:
+  Canary:
+    type: application
+    platform: macOS
+    sources:
+      - path: Canary
+        excludes:
+          - Info.plist
+          - Canary.entitlements
+    dependencies:
+      - package: CanaryPackage
+        product: CanaryEngine
+      - package: CanaryPackage
+        product: CanaryUI
+    settings:
+      base:
+        INFOPLIST_FILE: Canary/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.canary.app
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "5"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: false
+        CODE_SIGNING_ALLOWED: true
+        ENABLE_APP_SANDBOX: false
