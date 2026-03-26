@@ -12,9 +12,6 @@ public struct NotificationSettingsView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: Theme.paddingMedium) {
-            Text("Notifications")
-                .font(Theme.bodyFont.bold())
-
             Toggle("Breach alerts", isOn: $breachEnabled)
                 .onChange(of: breachEnabled) { _, val in
                     engine.notificationManager.breachNotificationsEnabled = val

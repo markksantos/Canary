@@ -20,7 +20,13 @@ public enum Theme {
     public static let popoverWidth: CGFloat = 360
     public static let popoverHeight: CGFloat = 480
     public static let cardCornerRadius: CGFloat = 8
+    public static let modalWidth: CGFloat = 320
     public static let iconSize: CGFloat = 20
+
+    // MARK: - Materials & Animations
+    public static let popoverMaterial: Material = .ultraThinMaterial
+    public static let standardAnimation: Animation = .easeInOut(duration: 0.2)
+    public static let springAnimation: Animation = .spring(response: 0.3, dampingFraction: 0.8)
 
     // MARK: - Fonts
     public static let titleFont = Font.headline

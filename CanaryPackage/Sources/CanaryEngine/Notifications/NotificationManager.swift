@@ -7,12 +7,39 @@ public final class NotificationManager {
     public static let dnsCategory = "DNS_CHANGE"
 
     private let center = UNUserNotificationCenter.current()
+    private var database: DatabaseManager?
 
-    public var breachNotificationsEnabled = true
-    public var pasteNotificationsEnabled = true
-    public var dnsNotificationsEnabled = true
+    private static let breachKey = "notification.breach"
+    private static let pasteKey = "notification.paste"
+    private static let dnsKey = "notification.dns"
+
+    public var breachNotificationsEnabled = true {
+        didSet { try? database?.saveSetting(key: Self.breachKey, value: breachNotificationsEnabled ? "true" : "false") }
+    }
+    public var pasteNotificationsEnabled = true {
+        didSet { try? database?.saveSetting(key: Self.pasteKey, value: pasteNotificationsEnabled ? "true" : "false") }
+    }
+    public var dnsNotificationsEnabled = true {
+        didSet { try? database?.saveSetting(key: Self.dnsKey, value: dnsNotificationsEnabled ? "true" : "false") }
+    }
 
     public init() {}
+
+    public func configure(database: DatabaseManager) {
+        self.database = database
+    }
+
+    public func loadPreferences() {
+        if let val = try? database?.loadSetting(key: Self.breachKey) {
+            breachNotificationsEnabled = val == "true"
+        }
+        if let val = try? database?.loadSetting(key: Self.pasteKey) {
+            pasteNotificationsEnabled = val == "true"
+        }
+        if let val = try? database?.loadSetting(key: Self.dnsKey) {
+            dnsNotificationsEnabled = val == "true"
+        }
+    }
 
     public func requestAuthorization() async -> Bool {
         do {

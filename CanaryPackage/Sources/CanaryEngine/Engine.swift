@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 @Observable
 public final class Engine {
@@ -8,6 +9,12 @@ public final class Engine {
     public var scanState: ScanState = .idle
     public var apiKeyConfigured: Bool = false
     public var errorMessage: String?
+    public var scanHistory: [ScanLogEntry] = []
+    public var newFindingsCount: Int = 0
+    public var onboardingCompleted: Bool = false
+
+    private var hasStarted = false
+    private let logger = Logger(subsystem: "com.canary.app", category: "Engine")
 
     public var overallStatus: AssetStatus {
         if assets.isEmpty { return .unknown }
@@ -21,10 +28,16 @@ public final class Engine {
         return false
     }
 
+    public var weeklyNewFindings: Int {
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        return recentFindings.filter { $0.date > weekAgo }.count
+    }
+
     // MARK: - Services
     public let keychain: KeychainManager
     public let database: DatabaseManager
     public let hibpClient: HIBPClient
+    public let xonClient: XposedOrNotClient
     public let dnsMonitor: DNSMonitor
     public let notificationManager: NotificationManager
     public let scheduler: ScanScheduler
@@ -37,6 +50,7 @@ public final class Engine {
         self.database = DatabaseManager(keychain: kc)
         self.dnsMonitor = DNSMonitor()
         self.notificationManager = NotificationManager()
+        self.xonClient = XposedOrNotClient()
 
         self.hibpClient = HIBPClient(apiKeyProvider: { [kc] in
             try? kc.loadString(forKey: Engine.apiKeyName)
@@ -50,15 +64,26 @@ public final class Engine {
     // MARK: - Lifecycle
 
     public func start() async {
+        guard !hasStarted else { return }
+        hasStarted = true
+        logger.info("Engine starting")
+
         do {
             try database.open()
             assets = try database.fetchAssets()
             recentFindings = try database.fetchFindings()
             apiKeyConfigured = (try? keychain.loadString(forKey: Engine.apiKeyName)) != nil
+            onboardingCompleted = (try? database.loadSetting(key: "onboardingCompleted")) == "true"
+            notificationManager.configure(database: database)
+            notificationManager.loadPreferences()
+            scanHistory = (try? database.fetchScanLogs()) ?? []
+            updateNewFindingsCount()
             _ = await notificationManager.requestAuthorization()
             notificationManager.registerCategories()
             scheduler.start()
+            logger.info("Engine started with \(self.assets.count) assets")
         } catch {
+            logger.error("Engine start failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -83,20 +108,31 @@ public final class Engine {
     // MARK: - Asset Management
 
     public func addEmail(_ email: String) throws {
-        let asset = MonitoredAsset(kind: .email, value: email, label: email)
+        let normalized = email.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !assets.contains(where: { $0.kind == .email && $0.value == normalized }) else {
+            throw EngineError.duplicateAsset
+        }
+        let asset = MonitoredAsset(kind: .email, value: normalized, label: normalized)
         try database.addAsset(asset)
         assets.insert(asset, at: 0)
     }
 
     public func addPassword(_ password: String) throws {
         let hash = PasswordHasher.sha1Hash(of: password)
+        guard !assets.contains(where: { $0.kind == .password && $0.value == hash }) else {
+            throw EngineError.duplicateAsset
+        }
         let asset = MonitoredAsset(kind: .password, value: hash, label: "Password (\(hash.prefix(8))...)")
         try database.addAsset(asset)
         assets.insert(asset, at: 0)
     }
 
     public func addDomain(_ domain: String) throws {
-        let asset = MonitoredAsset(kind: .domain, value: domain, label: domain)
+        let normalized = domain.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !assets.contains(where: { $0.kind == .domain && $0.value == normalized }) else {
+            throw EngineError.duplicateAsset
+        }
+        let asset = MonitoredAsset(kind: .domain, value: normalized, label: normalized)
         try database.addAsset(asset)
         assets.insert(asset, at: 0)
     }
@@ -113,9 +149,13 @@ public final class Engine {
         guard !isScanning else { return }
         scanState = .scanning(progress: 0)
         errorMessage = nil
+        logger.info("Starting full scan of \(self.assets.count) assets")
+
+        let scanLogId = try? database.insertScanLog(startedAt: Date(), assetsScanned: assets.count)
 
         let total = Double(assets.count)
         var newFindings: [Finding] = []
+        var scanErrors: [String] = []
 
         for (index, asset) in assets.enumerated() {
             if Task.isCancelled { break }
@@ -135,14 +175,38 @@ public final class Engine {
                     assets[idx] = updated
                 }
             } catch {
-                errorMessage = "Scan error for \(asset.label): \(error.localizedDescription)"
+                logger.error("Scan error for \(asset.label): \(error.localizedDescription)")
+                scanErrors.append(asset.label)
             }
         }
 
-        recentFindings = (try? database.fetchFindings()) ?? recentFindings
+        do {
+            recentFindings = try database.fetchFindings()
+        } catch {
+            logger.error("Failed to refresh findings: \(error.localizedDescription)")
+        }
+
+        if let logId = scanLogId {
+            let status = scanErrors.isEmpty ? "completed" : "partial"
+            try? database.completeScanLog(id: logId, findingsCount: newFindings.count, status: status)
+            scanHistory = (try? database.fetchScanLogs()) ?? []
+        }
+
+        updateNewFindingsCount()
         scanState = .completed(Date())
 
-        try? database.save()
+        do {
+            try database.save()
+        } catch {
+            logger.error("Failed to save database: \(error.localizedDescription)")
+            errorMessage = "Failed to save scan results"
+        }
+
+        if !scanErrors.isEmpty {
+            errorMessage = "Scan errors for \(scanErrors.count) asset(s)"
+        }
+
+        logger.info("Scan complete: \(newFindings.count) findings, \(scanErrors.count) errors")
     }
 
     private func scanAsset(_ asset: MonitoredAsset) async throws -> [Finding] {
@@ -158,33 +222,89 @@ public final class Engine {
 
     private func scanEmail(_ asset: MonitoredAsset) async throws -> [Finding] {
         var findings: [Finding] = []
+        var seenBreachNames: Set<String> = []
 
-        let breaches = try await hibpClient.checkEmail(asset.value)
-        for breach in breaches {
-            let finding = Finding(
-                assetID: asset.id,
-                source: .breach,
-                title: breach.title,
-                detail: "Found in \(breach.name) breach (\(breach.breachDate)). \(breach.pwnCount.formatted()) accounts affected.",
-                severity: breach.isVerified ? .high : .medium
-            )
-            try? database.saveFinding(finding)
-            findings.append(finding)
-            await notificationManager.sendBreachNotification(assetLabel: asset.label, breachName: breach.title)
+        // HIBP breach check (requires API key)
+        if apiKeyConfigured {
+            let breaches = try await hibpClient.checkEmail(asset.value)
+            for breach in breaches {
+                seenBreachNames.insert(breach.name.lowercased())
+                let metadata = FindingMetadata(
+                    domain: breach.domain,
+                    pwnCount: breach.pwnCount,
+                    dataClasses: breach.dataClasses,
+                    breachDate: breach.breachDate,
+                    isVerified: breach.isVerified,
+                    sourceProvider: "hibp",
+                    plainDetail: "Found in \(breach.name) breach (\(breach.breachDate)). \(breach.pwnCount.formatted()) accounts affected."
+                )
+                let detailJSON = (try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)) ?? metadata.plainDetail ?? ""
+                let finding = Finding(
+                    assetID: asset.id,
+                    source: .breach,
+                    title: breach.title,
+                    detail: detailJSON,
+                    severity: breach.isVerified ? .high : .medium
+                )
+                do {
+                    try database.saveFinding(finding)
+                } catch {
+                    logger.error("Failed to save finding: \(error.localizedDescription)")
+                }
+                findings.append(finding)
+                await notificationManager.sendBreachNotification(assetLabel: asset.label, breachName: breach.title)
+            }
+
+            let pastes = try await hibpClient.checkPastes(asset.value)
+            for paste in pastes {
+                let finding = Finding(
+                    assetID: asset.id,
+                    source: .paste,
+                    title: paste.title ?? "Untitled Paste",
+                    detail: "Found in paste on \(paste.source) (\(paste.emailCount) emails)",
+                    severity: .medium
+                )
+                do {
+                    try database.saveFinding(finding)
+                } catch {
+                    logger.error("Failed to save finding: \(error.localizedDescription)")
+                }
+                findings.append(finding)
+                await notificationManager.sendPasteNotification(assetLabel: asset.label, source: paste.source)
+            }
         }
 
-        let pastes = try await hibpClient.checkPastes(asset.value)
-        for paste in pastes {
-            let finding = Finding(
-                assetID: asset.id,
-                source: .paste,
-                title: paste.title ?? "Untitled Paste",
-                detail: "Found in paste on \(paste.source) (\(paste.emailCount) emails)",
-                severity: .medium
-            )
-            try? database.saveFinding(finding)
-            findings.append(finding)
-            await notificationManager.sendPasteNotification(assetLabel: asset.label, source: paste.source)
+        // XposedOrNot check (free, no API key needed)
+        do {
+            let xonBreaches = try await xonClient.checkEmail(asset.value)
+            for breach in xonBreaches where !seenBreachNames.contains(breach.breachName.lowercased()) {
+                let metadata = FindingMetadata(
+                    domain: breach.domain,
+                    pwnCount: breach.exposedRecords,
+                    dataClasses: breach.exposedData,
+                    breachDate: breach.exposedDate,
+                    isVerified: nil,
+                    sourceProvider: "xposedornot",
+                    plainDetail: "Found in \(breach.breachName) breach (\(breach.exposedDate)). \(breach.exposedRecords.formatted()) records exposed."
+                )
+                let detailJSON = (try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)) ?? metadata.plainDetail ?? ""
+                let finding = Finding(
+                    assetID: asset.id,
+                    source: .breach,
+                    title: breach.breachName,
+                    detail: detailJSON,
+                    severity: .medium
+                )
+                do {
+                    try database.saveFinding(finding)
+                } catch {
+                    logger.error("Failed to save finding: \(error.localizedDescription)")
+                }
+                findings.append(finding)
+                await notificationManager.sendBreachNotification(assetLabel: asset.label, breachName: breach.breachName)
+            }
+        } catch {
+            logger.warning("XposedOrNot check failed for \(asset.label): \(error.localizedDescription)")
         }
 
         return findings
@@ -201,7 +321,11 @@ public final class Engine {
                 detail: "This password has been seen \(count.formatted()) times in data breaches.",
                 severity: count > 100 ? .critical : .high
             )
-            try? database.saveFinding(finding)
+            do {
+                try database.saveFinding(finding)
+            } catch {
+                logger.error("Failed to save finding: \(error.localizedDescription)")
+            }
             return [finding]
         }
 
@@ -231,7 +355,11 @@ public final class Engine {
                     detail: "Added: \(diff.added.joined(separator: ", ")). Removed: \(diff.removed.joined(separator: ", ")).",
                     severity: diff.recordType == .ns ? .high : .medium
                 )
-                try? database.saveFinding(finding)
+                do {
+                    try database.saveFinding(finding)
+                } catch {
+                    logger.error("Failed to save finding: \(error.localizedDescription)")
+                }
                 findings.append(finding)
                 await notificationManager.sendDNSChangeNotification(
                     domain: asset.value, recordType: diff.recordType.rawValue
@@ -249,5 +377,111 @@ public final class Engine {
         }
 
         return findings
+    }
+    // MARK: - Onboarding
+
+    public func completeOnboarding() throws {
+        try database.saveSetting(key: "onboardingCompleted", value: "true")
+        onboardingCompleted = true
+    }
+
+    // MARK: - Badge
+
+    public func markFindingsViewed() {
+        let now = ISO8601DateFormatter().string(from: Date())
+        try? database.saveSetting(key: "lastViewedFindings", value: now)
+        newFindingsCount = 0
+    }
+
+    private func updateNewFindingsCount() {
+        guard let lastViewedStr = try? database.loadSetting(key: "lastViewedFindings"),
+              let lastViewed = ISO8601DateFormatter().date(from: lastViewedStr) else {
+            newFindingsCount = recentFindings.count
+            return
+        }
+        newFindingsCount = recentFindings.filter { $0.date > lastViewed }.count
+    }
+
+    // MARK: - Single Asset Scan
+
+    public func scanSingleAsset(_ asset: MonitoredAsset) async {
+        guard !isScanning else { return }
+        scanState = .scanning(progress: 0)
+        errorMessage = nil
+
+        do {
+            let findings = try await scanAsset(asset)
+
+            var updated = asset
+            updated.lastChecked = Date()
+            updated.findingCount = (try? database.fetchFindings(forAsset: asset.id))?.count ?? 0
+            updated.status = updated.findingCount > 0 ? .exposed : .safe
+
+            try database.updateAsset(updated)
+            if let idx = assets.firstIndex(where: { $0.id == asset.id }) {
+                assets[idx] = updated
+            }
+
+            recentFindings = try database.fetchFindings()
+            updateNewFindingsCount()
+            try database.save()
+
+            logger.info("Single scan complete for \(asset.label): \(findings.count) findings")
+        } catch {
+            logger.error("Single scan error for \(asset.label): \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+        }
+
+        scanState = .completed(Date())
+    }
+
+    // MARK: - CSV Import
+
+    public func importCSV(from url: URL) throws -> CSVImportResult {
+        let importer = CSVImporter()
+        let rows = try importer.parseCSV(from: url)
+        let format = importer.detectFormat(rows)
+        var result = importer.extractAssets(from: rows, format: format)
+
+        var importedEmails = 0
+        var importedPasswords = 0
+        var duplicates = 0
+
+        for email in result.emails {
+            do {
+                try addEmail(email)
+                importedEmails += 1
+            } catch {
+                duplicates += 1
+            }
+        }
+        for password in result.passwords {
+            do {
+                try addPassword(password)
+                importedPasswords += 1
+            } catch {
+                duplicates += 1
+            }
+        }
+
+        result = CSVImportResult(
+            emails: result.emails,
+            passwords: result.passwords,
+            importedEmails: importedEmails,
+            importedPasswords: importedPasswords,
+            skipped: result.skipped,
+            duplicates: duplicates
+        )
+        return result
+    }
+}
+
+public enum EngineError: LocalizedError {
+    case duplicateAsset
+
+    public var errorDescription: String? {
+        switch self {
+        case .duplicateAsset: return "This asset is already being monitored"
+        }
     }
 }

@@ -19,6 +19,12 @@ public struct TimelineView: View {
                         .font(Theme.captionFont)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
+
+                    Button("Run First Scan") {
+                        Task { await engine.runFullScan() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!engine.apiKeyConfigured || engine.isScanning || engine.assets.isEmpty)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()

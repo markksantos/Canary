@@ -7,6 +7,7 @@ public struct AddDomainView: View {
 
     @State private var domain = ""
     @State private var errorMessage: String?
+    @FocusState private var fieldFocused: Bool
 
     public init() {}
 
@@ -17,6 +18,7 @@ public struct AddDomainView: View {
 
             TextField("example.com", text: $domain)
                 .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
 
             Text("DNS records (A, MX, NS, TXT) will be captured as a baseline. Future scans will detect changes.")
                 .font(Theme.captionFont)
@@ -27,6 +29,7 @@ public struct AddDomainView: View {
                 Text(error)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.danger)
+                    .transition(.opacity)
             }
 
             HStack {
@@ -39,7 +42,8 @@ public struct AddDomainView: View {
             }
         }
         .padding(Theme.paddingXL)
-        .frame(width: 300)
+        .frame(width: Theme.modalWidth)
+        .onAppear { fieldFocused = true }
     }
 
     private var isValidDomain: Bool {

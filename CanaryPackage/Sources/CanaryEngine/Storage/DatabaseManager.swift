@@ -120,7 +120,7 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 8, formatter.string(from: asset.dateAdded), -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 
@@ -132,7 +132,7 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 
@@ -154,7 +154,7 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 4, asset.id.uuidString, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 
@@ -165,11 +165,16 @@ public final class DatabaseManager {
 
         var assets: [MonitoredAsset] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
-            let kind = AssetKind(rawValue: String(cString: sqlite3_column_text(stmt, 1)))!
+            guard let idStr = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
+                  let id = UUID(uuidString: idStr),
+                  let kindStr = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+                  let kind = AssetKind(rawValue: kindStr),
+                  let statusStr = sqlite3_column_text(stmt, 4).map({ String(cString: $0) }),
+                  let status = AssetStatus(rawValue: statusStr) else {
+                continue
+            }
             let value = String(cString: sqlite3_column_text(stmt, 2))
             let label = String(cString: sqlite3_column_text(stmt, 3))
-            let status = AssetStatus(rawValue: String(cString: sqlite3_column_text(stmt, 4)))!
             let lastChecked: Date? = sqlite3_column_type(stmt, 5) != SQLITE_NULL
                 ? formatter.date(from: String(cString: sqlite3_column_text(stmt, 5)))
                 : nil
@@ -204,14 +209,14 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 7, finding.severity.rawValue, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 
     public func fetchFindings(forAsset assetID: UUID? = nil) throws -> [Finding] {
         let sql: String
-        if let assetID = assetID {
-            sql = "SELECT id, asset_id, source, title, detail, date, severity FROM findings WHERE asset_id = '\(assetID.uuidString)' ORDER BY date DESC"
+        if assetID != nil {
+            sql = "SELECT id, asset_id, source, title, detail, date, severity FROM findings WHERE asset_id = ? ORDER BY date DESC"
         } else {
             sql = "SELECT id, asset_id, source, title, detail, date, severity FROM findings ORDER BY date DESC"
         }
@@ -219,18 +224,27 @@ public final class DatabaseManager {
         let stmt = try prepareStatement(sql)
         defer { sqlite3_finalize(stmt) }
 
+        if let assetID = assetID {
+            sqlite3_bind_text(stmt, 1, assetID.uuidString, -1, SQLITE_TRANSIENT)
+        }
+
         var findings: [Finding] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
-            let assetID = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 1)))!
-            let source = FindingSource(rawValue: String(cString: sqlite3_column_text(stmt, 2)))!
+            guard let idStr = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
+                  let id = UUID(uuidString: idStr),
+                  let aidStr = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+                  let aid = UUID(uuidString: aidStr),
+                  let srcStr = sqlite3_column_text(stmt, 2).map({ String(cString: $0) }),
+                  let source = FindingSource(rawValue: srcStr) else {
+                continue
+            }
             let title = String(cString: sqlite3_column_text(stmt, 3))
             let detail = String(cString: sqlite3_column_text(stmt, 4))
             let date = formatter.date(from: String(cString: sqlite3_column_text(stmt, 5))) ?? Date()
             let severity = Severity(rawValue: String(cString: sqlite3_column_text(stmt, 6))) ?? .medium
 
             findings.append(Finding(
-                id: id, assetID: assetID, source: source,
+                id: id, assetID: aid, source: source,
                 title: title, detail: detail, date: date, severity: severity
             ))
         }
@@ -257,7 +271,7 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 5, formatter.string(from: baseline.capturedAt), -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 
@@ -270,11 +284,16 @@ public final class DatabaseManager {
 
         var baselines: [DNSBaseline] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0)))!
-            let aid = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 1)))!
-            let recordType = DNSRecordType(rawValue: String(cString: sqlite3_column_text(stmt, 2)))!
+            guard let idStr = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
+                  let id = UUID(uuidString: idStr),
+                  let aidStr = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+                  let aid = UUID(uuidString: aidStr),
+                  let rtStr = sqlite3_column_text(stmt, 2).map({ String(cString: $0) }),
+                  let recordType = DNSRecordType(rawValue: rtStr) else {
+                continue
+            }
             let recordsStr = String(cString: sqlite3_column_text(stmt, 3))
-            let records = (try? JSONDecoder().decode([String].self, from: recordsStr.data(using: .utf8)!)) ?? []
+            let records = (try? recordsStr.data(using: .utf8).flatMap { try JSONDecoder().decode([String].self, from: $0) }) ?? []
             let capturedAt = formatter.date(from: String(cString: sqlite3_column_text(stmt, 4))) ?? Date()
 
             baselines.append(DNSBaseline(
@@ -283,6 +302,63 @@ public final class DatabaseManager {
             ))
         }
         return baselines
+    }
+
+    // MARK: - Scan Log
+
+    public func insertScanLog(startedAt: Date, assetsScanned: Int) throws -> Int64 {
+        let sql = "INSERT INTO scan_log (started_at, assets_scanned, findings_count, status) VALUES (?, ?, 0, 'running')"
+        let stmt = try prepareStatement(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, formatter.string(from: startedAt), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 2, Int32(assetsScanned))
+
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
+        }
+        return sqlite3_last_insert_rowid(db!)
+    }
+
+    public func completeScanLog(id: Int64, findingsCount: Int, status: String) throws {
+        let sql = "UPDATE scan_log SET completed_at = ?, findings_count = ?, status = ? WHERE id = ?"
+        let stmt = try prepareStatement(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, formatter.string(from: Date()), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 2, Int32(findingsCount))
+        sqlite3_bind_text(stmt, 3, status, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 4, id)
+
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
+        }
+    }
+
+    public func fetchScanLogs(limit: Int = 50) throws -> [ScanLogEntry] {
+        let sql = "SELECT id, started_at, completed_at, assets_scanned, findings_count, status FROM scan_log ORDER BY started_at DESC LIMIT ?"
+        let stmt = try prepareStatement(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+
+        var logs: [ScanLogEntry] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = sqlite3_column_int64(stmt, 0)
+            let startedAt = formatter.date(from: String(cString: sqlite3_column_text(stmt, 1))) ?? Date()
+            let completedAt: Date? = sqlite3_column_type(stmt, 2) != SQLITE_NULL
+                ? formatter.date(from: String(cString: sqlite3_column_text(stmt, 2)))
+                : nil
+            let assetsScanned = Int(sqlite3_column_int(stmt, 3))
+            let findingsCount = Int(sqlite3_column_int(stmt, 4))
+            let status = String(cString: sqlite3_column_text(stmt, 5))
+
+            logs.append(ScanLogEntry(
+                id: id, startedAt: startedAt, completedAt: completedAt,
+                assetsScanned: assetsScanned, findingsCount: findingsCount, status: status
+            ))
+        }
+        return logs
     }
 
     // MARK: - Settings
@@ -296,7 +372,7 @@ public final class DatabaseManager {
         sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw DatabaseError.executeFailed(String(cString: sqlite3_errmsg(db!)))
+            throw DatabaseError.executeFailed(db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown")
         }
     }
 

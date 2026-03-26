@@ -48,5 +48,7 @@ public enum Schema {
             captured_at TEXT NOT NULL,
             FOREIGN KEY (asset_id) REFERENCES monitored_assets(id) ON DELETE CASCADE
         );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_kind_value ON monitored_assets(kind, value);
         """
 }

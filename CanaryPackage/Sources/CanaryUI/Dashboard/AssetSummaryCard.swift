@@ -4,6 +4,8 @@ import CanaryEngine
 public struct AssetSummaryCard: View {
     let asset: MonitoredAsset
 
+    @State private var isHovered = false
+
     public init(asset: MonitoredAsset) {
         self.asset = asset
     }
@@ -46,7 +48,12 @@ public struct AssetSummaryCard: View {
             StatusBadge(status: asset.status)
         }
         .padding(Theme.paddingMedium)
-        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardCornerRadius))
+        .background {
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius)
+                .fill(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+        }
+        .onHover { isHovered = $0 }
+        .animation(Theme.standardAnimation, value: isHovered)
     }
 
     private var iconName: String {

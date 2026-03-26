@@ -7,14 +7,12 @@ public struct APIKeySettingView: View {
     @State private var apiKey = ""
     @State private var showKey = false
     @State private var saved = false
+    @State private var saveError: String?
 
     public init() {}
 
     public var body: some View {
         VStack(alignment: .leading, spacing: Theme.paddingMedium) {
-            Text("HIBP API Key")
-                .font(Theme.bodyFont.bold())
-
             HStack {
                 Group {
                     if showKey {
@@ -37,6 +35,14 @@ public struct APIKeySettingView: View {
                 Text("API key saved")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.safe)
+                    .transition(.opacity)
+            }
+
+            if let error = saveError {
+                Text(error)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.danger)
+                    .transition(.opacity)
             }
 
             if engine.apiKeyConfigured {
@@ -56,15 +62,17 @@ public struct APIKeySettingView: View {
     }
 
     private func saveKey() {
+        saveError = nil
         do {
             try engine.setAPIKey(apiKey)
-            saved = true
+            withAnimation(Theme.standardAnimation) { saved = true }
             apiKey = ""
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                saved = false
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                withAnimation(Theme.standardAnimation) { saved = false }
             }
         } catch {
-            // Handle error silently for now
+            withAnimation(Theme.standardAnimation) { saveError = error.localizedDescription }
         }
     }
 }

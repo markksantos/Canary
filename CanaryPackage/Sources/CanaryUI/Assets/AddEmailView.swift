@@ -7,6 +7,7 @@ public struct AddEmailView: View {
 
     @State private var email = ""
     @State private var errorMessage: String?
+    @FocusState private var fieldFocused: Bool
 
     public init() {}
 
@@ -18,11 +19,13 @@ public struct AddEmailView: View {
             TextField("email@example.com", text: $email)
                 .textFieldStyle(.roundedBorder)
                 .textContentType(.emailAddress)
+                .focused($fieldFocused)
 
             if let error = errorMessage {
                 Text(error)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.danger)
+                    .transition(.opacity)
             }
 
             HStack {
@@ -35,7 +38,8 @@ public struct AddEmailView: View {
             }
         }
         .padding(Theme.paddingXL)
-        .frame(width: 300)
+        .frame(width: Theme.modalWidth)
+        .onAppear { fieldFocused = true }
     }
 
     private var isValidEmail: Bool {

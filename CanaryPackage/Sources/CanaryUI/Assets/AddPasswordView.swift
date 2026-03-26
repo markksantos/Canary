@@ -7,6 +7,7 @@ public struct AddPasswordView: View {
 
     @State private var password = ""
     @State private var errorMessage: String?
+    @FocusState private var fieldFocused: Bool
 
     public init() {}
 
@@ -17,6 +18,7 @@ public struct AddPasswordView: View {
 
             SecureField("Enter password to check", text: $password)
                 .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
 
             Text("Your password is hashed locally using SHA-1 and only the first 5 characters of the hash are sent to the API (k-anonymity). The plaintext is never stored or transmitted.")
                 .font(Theme.captionFont)
@@ -27,6 +29,7 @@ public struct AddPasswordView: View {
                 Text(error)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.danger)
+                    .transition(.opacity)
             }
 
             HStack {
@@ -39,7 +42,8 @@ public struct AddPasswordView: View {
             }
         }
         .padding(Theme.paddingXL)
-        .frame(width: 340)
+        .frame(width: Theme.modalWidth)
+        .onAppear { fieldFocused = true }
     }
 
     private func addPassword() {

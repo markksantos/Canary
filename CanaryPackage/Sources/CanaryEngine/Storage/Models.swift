@@ -85,6 +85,57 @@ public enum FindingSource: String, Codable, Sendable {
     case dnsChange
 }
 
+public struct ScanLogEntry: Identifiable, Sendable {
+    public let id: Int64
+    public let startedAt: Date
+    public let completedAt: Date?
+    public let assetsScanned: Int
+    public let findingsCount: Int
+    public let status: String
+
+    public init(id: Int64, startedAt: Date, completedAt: Date? = nil, assetsScanned: Int, findingsCount: Int = 0, status: String = "running") {
+        self.id = id
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.assetsScanned = assetsScanned
+        self.findingsCount = findingsCount
+        self.status = status
+    }
+}
+
+public struct FindingMetadata: Codable, Sendable {
+    public let domain: String?
+    public let pwnCount: Int?
+    public let dataClasses: [String]?
+    public let breachDate: String?
+    public let isVerified: Bool?
+    public let sourceProvider: String?
+    public let plainDetail: String?
+
+    public init(domain: String? = nil, pwnCount: Int? = nil, dataClasses: [String]? = nil,
+                breachDate: String? = nil, isVerified: Bool? = nil, sourceProvider: String? = nil,
+                plainDetail: String? = nil) {
+        self.domain = domain
+        self.pwnCount = pwnCount
+        self.dataClasses = dataClasses
+        self.breachDate = breachDate
+        self.isVerified = isVerified
+        self.sourceProvider = sourceProvider
+        self.plainDetail = plainDetail
+    }
+}
+
+extension Finding {
+    public var metadata: FindingMetadata? {
+        guard let data = detail.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(FindingMetadata.self, from: data)
+    }
+
+    public var displayDetail: String {
+        metadata?.plainDetail ?? detail
+    }
+}
+
 public enum Severity: String, Codable, Comparable, Sendable {
     case low
     case medium

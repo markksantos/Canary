@@ -27,7 +27,10 @@ public final class HIBPClient: Sendable {
         try await rateLimiter.acquire()
 
         let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
-        var request = URLRequest(url: URL(string: "\(baseURL)/breachedaccount/\(encoded)?truncateResponse=false")!)
+        guard let url = URL(string: "\(baseURL)/breachedaccount/\(encoded)?truncateResponse=false") else {
+            throw HIBPError.invalidURL
+        }
+        var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "hibp-api-key")
         request.setValue("Canary", forHTTPHeaderField: "user-agent")
 
@@ -44,7 +47,10 @@ public final class HIBPClient: Sendable {
         try await rateLimiter.acquire()
 
         let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
-        var request = URLRequest(url: URL(string: "\(baseURL)/pasteaccount/\(encoded)")!)
+        guard let url = URL(string: "\(baseURL)/pasteaccount/\(encoded)") else {
+            throw HIBPError.invalidURL
+        }
+        var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "hibp-api-key")
         request.setValue("Canary", forHTTPHeaderField: "user-agent")
 
@@ -59,7 +65,10 @@ public final class HIBPClient: Sendable {
 
         try await rateLimiter.acquire()
 
-        var request = URLRequest(url: URL(string: "\(passwordURL)/range/\(prefix)")!)
+        guard let url = URL(string: "\(passwordURL)/range/\(prefix)") else {
+            throw HIBPError.invalidURL
+        }
+        var request = URLRequest(url: url)
         request.setValue("Canary", forHTTPHeaderField: "user-agent")
 
         let (data, response) = try await session.data(for: request)
@@ -80,7 +89,9 @@ public final class HIBPClient: Sendable {
 
     private func perform<T: Decodable>(_ request: URLRequest, decoding type: T.Type) async throws -> T {
         let (data, response) = try await session.data(for: request)
-        let httpResponse = response as! HTTPURLResponse
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw HIBPError.httpError(0)
+        }
 
         switch httpResponse.statusCode {
         case 200:
@@ -106,7 +117,9 @@ public final class HIBPClient: Sendable {
     }
 
     private func validateStatus(_ response: URLResponse) throws {
-        let httpResponse = response as! HTTPURLResponse
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw HIBPError.httpError(0)
+        }
         guard httpResponse.statusCode == 200 else {
             throw HIBPError.httpError(httpResponse.statusCode)
         }
@@ -117,6 +130,7 @@ public enum HIBPError: LocalizedError {
     case missingAPIKey
     case invalidAPIKey
     case rateLimited
+    case invalidURL
     case httpError(Int)
 
     public var errorDescription: String? {
@@ -124,6 +138,7 @@ public enum HIBPError: LocalizedError {
         case .missingAPIKey: return "HIBP API key not configured"
         case .invalidAPIKey: return "Invalid HIBP API key"
         case .rateLimited: return "Rate limited by HIBP API"
+        case .invalidURL: return "Invalid URL"
         case .httpError(let code): return "HTTP error \(code)"
         }
     }

@@ -4,6 +4,7 @@ import CanaryEngine
 public struct TimelineRow: View {
     let finding: Finding
     @State private var isExpanded = false
+    @State private var isHovered = false
 
     public init(finding: Finding) {
         self.finding = finding
@@ -31,20 +32,42 @@ public struct TimelineRow: View {
                 Text(finding.date, style: .relative)
                     .font(Theme.captionFont)
                     .foregroundStyle(.tertiary)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(Theme.springAnimation, value: isExpanded)
             }
 
             if isExpanded {
-                Text(finding.detail)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 24)
-                    .padding(.top, 2)
+                Group {
+                    if finding.source == .breach, let meta = finding.metadata {
+                        BreachDetailCard(finding: finding, metadata: meta)
+                    } else {
+                        Text(finding.displayDetail)
+                            .font(Theme.captionFont)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 24)
+                            .padding(.top, 2)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(Theme.paddingMedium)
-        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: Theme.cardCornerRadius))
+        .background {
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius)
+                .fill(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+        }
         .contentShape(Rectangle())
-        .onTapGesture { isExpanded.toggle() }
+        .onTapGesture {
+            withAnimation(Theme.springAnimation) {
+                isExpanded.toggle()
+            }
+        }
+        .onHover { isHovered = $0 }
+        .animation(Theme.standardAnimation, value: isHovered)
     }
 
     private var iconName: String {
