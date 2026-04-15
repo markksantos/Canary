@@ -27,3 +27,9 @@ Package.resolved
 
 # App data
 *.db.enc
+
+
+# Environment
+.env
+.env.local
+.env.*.local
