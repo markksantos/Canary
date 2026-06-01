@@ -17,9 +17,9 @@
 
 ## Features
 
-- **Breach Monitoring** — Check emails against known data breaches via the HIBP v3 API
-- **Paste Detection** — Discover if your email addresses have appeared in public pastes
-- **Password Auditing** — Verify passwords against breach databases using k-anonymity (SHA-1 prefix only, plaintext never leaves your machine)
+- **Breach Monitoring** — Check emails against known data breaches via the HIBP v3 API (paid key) *and* the free [XposedOrNot](https://xposedornot.com) API, with results de-duplicated across both providers
+- **Paste Detection** — Discover if your email addresses have appeared in public pastes (HIBP)
+- **Password Auditing** — Verify passwords against breach databases using k-anonymity (SHA-1 prefix only, plaintext never leaves your machine — no API key required)
 - **DNS Surveillance** — Track A, MX, NS, and TXT record changes for your domains with automatic baseline diffing
 - **Encrypted Storage** — In-memory SQLite database serialized to disk as an AES-256-GCM encrypted blob with Keychain-managed keys
 - **Menu Bar Native** — Lives in your menu bar with a window-style popover, no Dock icon
@@ -27,6 +27,8 @@
 - **macOS Notifications** — Alerts for new breaches, pastes, and DNS changes with per-type toggles
 - **PDF Reports** — Export a formatted security report of all assets and findings
 - **Scheduled Scans** — Configurable 1h / 6h / 12h / 24h automatic scanning
+- **CSV Import** — Bulk-import emails/passwords from 1Password, Bitwarden, Safari, or generic CSV exports
+- **Onboarding** — Three-step first-run flow (welcome → API key → first asset)
 - **Launch at Login** — One-click toggle via SMAppService
 - **Zero Dependencies** — Pure Apple frameworks only, no third-party Swift packages
 
@@ -36,27 +38,40 @@
 
 - macOS 14 Sonoma or later
 - Xcode 15+ with Swift 5.10+
-- [HIBP API key](https://haveibeenpwned.com/API/Key) (required for email/paste checks, free for password checks)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) to (re)generate the Xcode project
+- A [HIBP API key](https://haveibeenpwned.com/API/Key) is **optional** — it unlocks HIBP email/paste breach checks. Password (k-anonymity) checks, DNS monitoring, and XposedOrNot email breach checks all work with no key. The key is entered in the app's Settings and stored in the macOS Keychain; it is never written to disk in plaintext.
 
-### Installation
+### Build & run
+
+Engine + UI as a Swift package (fast iteration, runs the test suite):
 
 ```bash
-git clone https://github.com/markksantos/Canary.git
-cd Canary
+cd CanaryPackage
 swift build
-swift run
+swift test          # 22 tests
 ```
 
-Or open `Canary.xcodeproj` in Xcode for the full app bundle experience with code signing.
+Full menu-bar app bundle (regenerates the Xcode project from `project.yml`):
+
+```bash
+xcodegen generate
+xcodebuild -project Canary.xcodeproj -scheme Canary -configuration Debug \
+  -derivedDataPath build/DerivedData build
+open build/DerivedData/Build/Products/Debug/Canary.app
+```
+
+The app has no Dock icon (`LSUIElement = YES`); look for the bird in the menu bar.
 
 ### Permissions
 
-Canary requires the following entitlements when sandboxed:
+Canary ships **unsandboxed** for direct distribution (DMG / GitHub Releases) so it can
+use the default Keychain when ad-hoc or Developer ID signed. It requests:
 
 | Permission | Reason |
 |---|---|
-| Network Client | HIBP API requests and DNS resolution |
-| Keychain Access | Storing the encryption key and API key |
+| Network Client | HIBP / XposedOrNot API requests and DNS resolution |
+| Keychain Access | Storing the database encryption key and the HIBP API key |
+| Notifications | Breach / paste / DNS-change alerts (requested at first launch) |
 
 ## Tech Stack
 
@@ -133,10 +148,44 @@ Canary/
 │       └── CanaryEngineTests/
 │           ├── DatabaseManagerTests.swift
 │           ├── HIBPClientTests.swift
+│           ├── XposedOrNotClientTests.swift
+│           ├── CSVImporterTests.swift
 │           └── PasswordHasherTests.swift
 ├── project.yml                              # XcodeGen spec
 └── .gitignore
 ```
+
+## Distribution
+
+Canary is deploy-ready as a directly-distributed (non-MAS) macOS app. The repo
+builds and signs ad-hoc out of the box; shipping to other Macs needs an Apple
+Developer ID and notarization.
+
+1. **Build Release**
+   ```bash
+   xcodegen generate
+   xcodebuild -project Canary.xcodeproj -scheme Canary -configuration Release \
+     -derivedDataPath build/Release \
+     CODE_SIGN_IDENTITY="Developer ID Application: <Your Name> (TEAMID)" \
+     CODE_SIGN_STYLE=Manual build
+   ```
+2. **Notarize**
+   ```bash
+   ditto -c -k --keepParent build/Release/Build/Products/Release/Canary.app Canary.zip
+   xcrun notarytool submit Canary.zip --apple-id <id> --team-id <TEAMID> \
+     --password <app-specific-password> --wait
+   xcrun stapler staple build/Release/Build/Products/Release/Canary.app
+   ```
+3. **Package** — wrap the `.app` in a DMG (e.g. `create-dmg`) or attach it to a
+   GitHub Release.
+
+For the **Mac App Store** instead: re-enable `com.apple.security.app-sandbox` and
+add `keychain-access-groups` + `com.apple.security.network.client` in
+`Canary/Canary.entitlements`, then archive and upload via Xcode Organizer or
+`xcodebuild -exportArchive`.
+
+> Notarization and store submission require Mark's Apple Developer account; the
+> ad-hoc build above runs locally without it.
 
 ## License
 

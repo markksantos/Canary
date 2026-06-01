@@ -73,8 +73,18 @@
 - [x] Launch at login via SMAppService
 - [ ] Manual verification of notifications and PDF export
 
-## Build Status
-- SPM build: PASS
-- Xcode build: PASS (0 warnings)
-- Tests: 15/15 passing
-- Files: 34 Swift source files, ~2,700 lines
+## Build Status (2026-05-31)
+- SPM build: PASS (0 warnings — fixed Swift 6 Sendable closure-capture warning)
+- Xcode build: PASS (0 warnings, ad-hoc signed `Canary.app` produced)
+- App launch: PASS (boots as LSUIElement menu-bar app, no crash, no stderr)
+- Tests: 22/22 passing (added XposedOrNot + CSVImporter suites; fixed test isolation)
+
+## Post-1.0 hardening (2026-05-31)
+- [x] Fixed XposedOrNot client (was hitting the wrong endpoint → always 0 breaches)
+- [x] Fixed test isolation (parallel DB tests shared the real on-disk store)
+- [x] De-sandboxed for direct distribution; documented MAS re-sandboxing
+- [x] Added LICENSE (MIT) and CHANGELOG.md, tagged v1.0.0
+- [ ] HIBP email/paste checks unverified end-to-end (needs Mark's paid HIBP key)
+- [ ] DNS MX/NS/TXT values are shown as raw wire bytes (change-detection works;
+      full record decoding is a future enhancement)
+- [ ] App icon (AppIcon asset is referenced but no .icns/asset catalog present)
