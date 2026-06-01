@@ -97,7 +97,7 @@ public struct SettingsView: View {
                 try data.write(to: url)
             }
         } catch {
-            // Handle error
+            engine.errorMessage = "PDF export failed: \(error.localizedDescription)"
         }
     }
 

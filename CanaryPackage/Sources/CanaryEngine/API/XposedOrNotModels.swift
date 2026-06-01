@@ -42,11 +42,18 @@ struct XONBreachDetail: Decodable {
     }
 
     func toXONBreach() -> XONBreach {
-        XONBreach(
+        // XposedOrNot returns the exposed data classes as a single string
+        // delimited by ";" (e.g. "Email addresses;Names;Phone numbers").
+        // Some legacy records use "," — accept either delimiter.
+        let classes = (exposedData ?? "")
+            .split(whereSeparator: { $0 == ";" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return XONBreach(
             breachName: breach ?? "Unknown",
             domain: domain ?? "",
             exposedDate: exposedDate ?? "",
-            exposedData: (exposedData ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
+            exposedData: classes,
             exposedRecords: exposedRecords ?? 0
         )
     }
