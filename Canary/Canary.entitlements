@@ -2,13 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
+    <!--
+        Canary ships unsandboxed for direct distribution (DMG / GitHub Releases).
+        This lets the app store its encryption key in the default Keychain when
+        ad-hoc or Developer ID signed, without requiring a keychain-access-group
+        (which needs a paid Team prefix that ad-hoc signing cannot provide).
+
+        For Mac App Store distribution, re-enable the sandbox and add the
+        keychain-access-group + network.client entitlements — see README
+        "Distribution" for the exact MAS entitlements set.
+    -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <key>keychain-access-groups</key>
-    <array>
-        <string>$(AppIdentifierPrefix)com.canary.app</string>
-    </array>
 </dict>
 </plist>

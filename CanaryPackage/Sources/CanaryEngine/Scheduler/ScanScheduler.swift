@@ -19,20 +19,25 @@ public final class ScanScheduler {
 
     private var task: Task<Void, Never>?
     private var interval: Interval
-    private let onScan: @Sendable () async -> Void
 
-    public init(interval: Interval = .twentyFourHours, onScan: @escaping @Sendable () async -> Void) {
+    /// The action run on each scheduled tick. Assigned by the owner (the
+    /// `Engine`) after both objects exist, which avoids capturing a mutable
+    /// variable inside a `@Sendable` closure during initialization.
+    public var onScan: (@Sendable () async -> Void)?
+
+    public init(interval: Interval = .twentyFourHours, onScan: (@Sendable () async -> Void)? = nil) {
         self.interval = interval
         self.onScan = onScan
     }
 
     public func start() {
         stop()
+        let action = onScan
         task = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(interval.rawValue))
                 if Task.isCancelled { break }
-                await onScan()
+                await action?()
             }
         }
     }

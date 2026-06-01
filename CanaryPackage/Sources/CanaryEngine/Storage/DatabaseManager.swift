@@ -9,13 +9,31 @@ public final class DatabaseManager {
     private let keychain: KeychainManager
     private let formatter = ISO8601DateFormatter()
 
-    public init(keychain: KeychainManager) {
+    /// - Parameters:
+    ///   - keychain: Keychain wrapper used to load/store the AES-256-GCM key.
+    ///   - fileURL: Optional override for the encrypted database location. When
+    ///     `nil` (the default) the database lives at
+    ///     `~/Library/Application Support/Canary/canary.db.enc`. Tests pass an
+    ///     isolated temporary URL so they never touch the user's real data.
+    public init(keychain: KeychainManager, fileURL: URL? = nil) {
         self.keychain = keychain
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let canaryDir = appSupport.appendingPathComponent("Canary", isDirectory: true)
-        try? FileManager.default.createDirectory(at: canaryDir, withIntermediateDirectories: true)
-        self.fileURL = canaryDir.appendingPathComponent("canary.db.enc")
+        if let fileURL {
+            try? FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            self.fileURL = fileURL
+        } else {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let canaryDir = appSupport.appendingPathComponent("Canary", isDirectory: true)
+            try? FileManager.default.createDirectory(at: canaryDir, withIntermediateDirectories: true)
+            self.fileURL = canaryDir.appendingPathComponent("canary.db.enc")
+        }
     }
+
+    /// Filesystem location of the encrypted database, exposed for diagnostics
+    /// and so tests can clean up the file they created.
+    public var databaseFileURL: URL { fileURL }
 
     // MARK: - Lifecycle
 
@@ -27,28 +45,46 @@ public final class DatabaseManager {
         self.db = dbPointer
 
         if FileManager.default.fileExists(atPath: fileURL.path) {
-            let encryptedData = try Data(contentsOf: fileURL)
-            let key = try DatabaseEncryption.loadOrCreateKey(keychain: keychain)
-            let plainData = try DatabaseEncryption.decrypt(encryptedData, using: key)
+            do {
+                let encryptedData = try Data(contentsOf: fileURL)
+                let key = try DatabaseEncryption.loadOrCreateKey(keychain: keychain)
+                let plainData = try DatabaseEncryption.decrypt(encryptedData, using: key)
 
-            let bufferSize = Int64(plainData.count)
-            guard let buffer = sqlite3_malloc64(UInt64(bufferSize)) else {
-                throw DatabaseError.deserializeFailed
-            }
-            plainData.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: Int(bufferSize))
+                let bufferSize = Int64(plainData.count)
+                guard let buffer = sqlite3_malloc64(UInt64(bufferSize)) else {
+                    throw DatabaseError.deserializeFailed
+                }
+                plainData.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: Int(bufferSize))
 
-            let rc = sqlite3_deserialize(
-                db, "main",
-                buffer.assumingMemoryBound(to: UInt8.self),
-                bufferSize, bufferSize,
-                UInt32(SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE)
-            )
-            guard rc == SQLITE_OK else {
-                throw DatabaseError.deserializeFailed
+                let rc = sqlite3_deserialize(
+                    db, "main",
+                    buffer.assumingMemoryBound(to: UInt8.self),
+                    bufferSize, bufferSize,
+                    UInt32(SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE)
+                )
+                guard rc == SQLITE_OK else {
+                    throw DatabaseError.deserializeFailed
+                }
+            } catch {
+                // The on-disk store could not be decrypted or deserialized —
+                // e.g. the Keychain key was lost (reinstall, migrated machine)
+                // or the file is corrupt. Rather than crash-loop on every launch,
+                // quarantine the unreadable file and start from a clean database.
+                quarantineCorruptStore(reason: error)
+                try execute(Schema.createTables)
+                return
             }
         }
 
         try execute(Schema.createTables)
+    }
+
+    /// Moves an undecryptable/corrupt database aside so the app can recover with
+    /// a fresh store instead of failing to launch. The bad file is renamed (not
+    /// deleted) so it can be inspected or recovered manually if the key resurfaces.
+    private func quarantineCorruptStore(reason: Error) {
+        let backupURL = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+        try? FileManager.default.moveItem(at: fileURL, to: backupURL)
     }
 
     public func save() throws {

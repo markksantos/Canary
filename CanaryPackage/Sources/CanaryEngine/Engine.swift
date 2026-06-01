@@ -56,9 +56,8 @@ public final class Engine {
             try? kc.loadString(forKey: Engine.apiKeyName)
         })
 
-        var scanRef: (() async -> Void)?
-        self.scheduler = ScanScheduler { await scanRef?() }
-        scanRef = { [weak self] in await self?.runFullScan() }
+        self.scheduler = ScanScheduler()
+        self.scheduler.onScan = { [weak self] in await self?.runFullScan() }
     }
 
     // MARK: - Lifecycle
