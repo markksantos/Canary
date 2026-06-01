@@ -5,16 +5,23 @@ import Foundation
 // MARK: - Mock URLProtocol
 
 final class MockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var mockData: [String: Data] = [:]
-    nonisolated(unsafe) static var mockCodes: [String: Int] = [:]
+    // Shared registry keyed by absolute URL. Guarded by `lock` because Swift
+    // Testing runs suites in parallel and several suites register stubs here.
+    // Stubs are keyed by unique full URLs, so registrations never collide and
+    // there is no destructive global reset — an unregistered URL simply 404s.
+    nonisolated(unsafe) private static var mockData: [String: Data] = [:]
+    nonisolated(unsafe) private static var mockCodes: [String: Int] = [:]
+    private static let lock = NSLock()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         let url = request.url!.absoluteString
+        Self.lock.lock()
         let statusCode = Self.mockCodes[url] ?? 404
         let data = Self.mockData[url] ?? Data()
+        Self.lock.unlock()
 
         let response = HTTPURLResponse(
             url: request.url!,
@@ -30,17 +37,14 @@ final class MockURLProtocol: URLProtocol {
     override func stopLoading() {}
 
     static func register(url: String, statusCode: Int, data: Data) {
+        lock.lock()
         mockData[url] = data
         mockCodes[url] = statusCode
+        lock.unlock()
     }
 
     static func register(url: String, statusCode: Int, body: String) {
         register(url: url, statusCode: statusCode, data: body.data(using: .utf8)!)
-    }
-
-    static func reset() {
-        mockData.removeAll()
-        mockCodes.removeAll()
     }
 }
 
@@ -53,10 +57,6 @@ struct HIBPClientTests {
         config.protocolClasses = [MockURLProtocol.self]
         return URLSession(configuration: config)
     }()
-
-    init() {
-        MockURLProtocol.reset()
-    }
 
     @Test("Password check returns exposure count")
     func passwordCheck() async throws {

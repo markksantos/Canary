@@ -4,10 +4,31 @@ import Foundation
 
 @Suite("DatabaseManager Tests")
 struct DatabaseManagerTests {
+    /// Builds a fully isolated `DatabaseManager` for a single test.
+    ///
+    /// Each test gets its own unique Keychain service *and* its own encrypted
+    /// database file inside a temporary directory, so tests never touch the
+    /// user's real data and can run in parallel without stomping on a shared
+    /// on-disk store. The returned cleanup closure removes both.
+    private func makeIsolatedManager() -> (db: DatabaseManager, keychain: KeychainManager, cleanup: () -> Void) {
+        let suffix = UUID().uuidString
+        let keychain = KeychainManager(service: "com.canary.test.\(suffix)")
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("canary-tests", isDirectory: true)
+            .appendingPathComponent("\(suffix).db.enc")
+        let db = DatabaseManager(keychain: keychain, fileURL: fileURL)
+
+        let cleanup = {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? keychain.delete(key: "database-encryption-key")
+        }
+        return (db, keychain, cleanup)
+    }
+
     @Test("Round-trip: add asset, save, reopen, verify")
     func roundTrip() throws {
-        let keychain = KeychainManager(service: "com.canary.test.\(UUID().uuidString)")
-        let db = DatabaseManager(keychain: keychain)
+        let (db, keychain, cleanup) = makeIsolatedManager()
+        defer { cleanup() }
 
         try db.open()
 
@@ -26,8 +47,9 @@ struct DatabaseManagerTests {
 
         try db.close()
 
-        // Reopen and verify persistence
-        let db2 = DatabaseManager(keychain: keychain)
+        // Reopen the *same* encrypted file with the *same* keychain key and
+        // verify the asset survived a serialize -> encrypt -> decrypt -> deserialize cycle.
+        let db2 = DatabaseManager(keychain: keychain, fileURL: db.databaseFileURL)
         try db2.open()
 
         let refetched = try db2.fetchAssets()
@@ -35,15 +57,12 @@ struct DatabaseManagerTests {
         #expect(refetched.first?.value == "test@example.com")
 
         try db2.close()
-
-        // Cleanup
-        try? keychain.delete(key: "database-encryption-key")
     }
 
     @Test("Add and fetch findings")
     func findings() throws {
-        let keychain = KeychainManager(service: "com.canary.test.\(UUID().uuidString)")
-        let db = DatabaseManager(keychain: keychain)
+        let (db, _, cleanup) = makeIsolatedManager()
+        defer { cleanup() }
 
         try db.open()
 
@@ -67,13 +86,12 @@ struct DatabaseManagerTests {
         #expect(assetFindings.count == 1)
 
         try db.close()
-        try? keychain.delete(key: "database-encryption-key")
     }
 
     @Test("Remove asset")
     func removeAsset() throws {
-        let keychain = KeychainManager(service: "com.canary.test.\(UUID().uuidString)")
-        let db = DatabaseManager(keychain: keychain)
+        let (db, _, cleanup) = makeIsolatedManager()
+        defer { cleanup() }
 
         try db.open()
 
@@ -85,13 +103,12 @@ struct DatabaseManagerTests {
         #expect(try db.fetchAssets().count == 0)
 
         try db.close()
-        try? keychain.delete(key: "database-encryption-key")
     }
 
     @Test("Update asset status")
     func updateAsset() throws {
-        let keychain = KeychainManager(service: "com.canary.test.\(UUID().uuidString)")
-        let db = DatabaseManager(keychain: keychain)
+        let (db, _, cleanup) = makeIsolatedManager()
+        defer { cleanup() }
 
         try db.open()
 
@@ -109,13 +126,12 @@ struct DatabaseManagerTests {
         #expect(fetched.first?.lastChecked != nil)
 
         try db.close()
-        try? keychain.delete(key: "database-encryption-key")
     }
 
     @Test("Settings save and load")
     func settings() throws {
-        let keychain = KeychainManager(service: "com.canary.test.\(UUID().uuidString)")
-        let db = DatabaseManager(keychain: keychain)
+        let (db, _, cleanup) = makeIsolatedManager()
+        defer { cleanup() }
 
         try db.open()
 
@@ -127,6 +143,5 @@ struct DatabaseManagerTests {
         #expect(missing == nil)
 
         try db.close()
-        try? keychain.delete(key: "database-encryption-key")
     }
 }
